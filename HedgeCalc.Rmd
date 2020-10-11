@@ -1,0 +1,321 @@
+---
+title: "Data 618 - Mid-term Hedge Calculator"
+author: "James Mundy"
+date: "10/11/2020"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(shinydashboard)
+library(shiny)
+
+```
+
+
+## Hedge Calculator
+
+
+<div style="width:1000px; height:1000px">
+
+```{r echo=FALSE, fig.height=10}
+odds_list <- c('--','1/9','1/5','2/5','1/2','3/5','4/5','1/1','6/5','7/5',
+               '3/2','8/5','9/5','2/1','5/2','3/1','7/2','4/1','9/2','5/1',
+               '6/1','7/1','8/1','9/1','10/1','11/1','12/1','13/1','14/1','15/1',
+               '16/1','17/1','18/1','19/1','20/1','25/1','30/1','40/1','50/1',
+               '60/1','70/1','80/1','90/1','99/1')
+
+value_list <- c(0,0.20,0.40,0.80,1.0,1.20,1.60,2.0,2.4,2.80,
+               3,3.20,3.60,4.0,5.0,6.0,7.0,8.0,9.0,10.0,
+               12,14,16,18,20,22,24,26,28,30,
+               32,34,36,38,40,50,60,80,100,
+               120,140,160,180,198)
+
+odds_df <- tibble(odds=odds_list,value=value_list)
+get_odds <- odds_df$value
+names(get_odds) <- odds_df$odds
+
+wager_list <- c(10, 20, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)
+
+return_list <- c("Y","N")
+
+num_list <- c('-',seq(1:20))
+```
+
+
+```{r eruptions, echo=FALSE}
+
+
+
+ui <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      fluidRow(
+    column(3,
+           selectInput("no1",label="No.",choices=num_list),
+           selectInput("no2",label=NULL,choices=num_list),
+           selectInput("no3",label=NULL,choices=num_list),
+    ),
+    column(4,
+           selectInput("odd1",label="Odds",choices=odds_list),
+           selectInput("odd2",label=NULL,choices=odds_list),
+           selectInput("odd3",label=NULL,choices=odds_list),
+    ),
+    column(3,
+           selectInput("fix1",label="Fixed",choices=return_list, selected = 'N'),
+           selectInput("fix2",label=NULL,choices=return_list, selected = 'N'),
+           selectInput("fix3",label=NULL,choices=return_list, selected = 'N')
+    ),
+    selectInput("wager",label='  Wager Amount:',choices=wager_list,selected = 1000),
+    br(),
+    actionButton("action_Calc", label = "Refresh & Calculate"), 
+    br(),
+    br(),   
+   
+    br()   
+  )
+    ,width = 5),
+    mainPanel(
+     tabsetPanel(
+                tabPanel("Output",
+                #  p(h5("Your entered values:")),
+                    
+                 #   textOutput("text_odd1"),
+                #    textOutput("text_fix1"),
+                    
+                 #   textOutput("text_odd2"),
+                #    textOutput("text_fix2"),
+                   
+                 #   textOutput("text_odd3"),
+                #    textOutput("text_fix3"),
+                #    textOutput("text_wager"),
+                 #   br(),
+                    p(h5("Calculated values:")),
+                   fluidRow(
+                    column(4,
+                    textOutput("text_no1"),
+                    textOutput("text_odd1"),
+                    textOutput("text_b1"),
+                    textOutput("text_m1"),),
+                   column(4,
+                    textOutput("text_no2"),
+                    textOutput("text_odd2"),
+                    textOutput("text_b2"),
+                    textOutput("text_m2"),),
+                    column(4,
+                    textOutput("text_no3"),
+                    textOutput("text_odd3"),
+                    textOutput("text_b3"),
+                    textOutput("text_m3"),),),
+                    br(),
+                ),
+                tabPanel("Documentation",
+                    p(h4("Hedge Calculator:")),
+                    br(),
+                    helpText("This application calculates the appropriate hedge given user inputs."),
+                    HTML("<u><b>Equation(s) for calculations: </b></u>
+                        <br> <br>
+                        <b> A = P + I = P(1 + rt) ; R = r * 100 </b>
+                        <br>
+                        where: <br>
+                        A = Total amount (Principal + Interest) <br>
+                        P = Principal amount <br>
+                        I = Interest amount <br>
+                        r = Rate of interest per year, in decimal; r=R/100 <br>
+                        t = Time period invested in years/quarters/months
+                    ")  
+                         )
+            ),
+      
+    width = 7)
+  )
+  
+)
+
+
+server <- function(input,output){
+  values <- reactiveValues()
+    # Calculate the interest and amount
+  
+  
+    observe({
+        input$action_Calc
+  
+        values$b1 <- round(isolate({
+           if_else(get_odds[[input$odd2]] == 0 & get_odds[[input$odd3]]==0, as.numeric(input$wager), as.numeric(input$wager) * ((max(1,get_odds[[input$odd2]])*max(1,get_odds[[input$odd3]]))/((max(1,get_odds[[input$odd2]])*if_else(get_odds[[input$odd1]]==0,0,1)*max(1,get_odds[[input$odd3]]))+(max(1,get_odds[[input$odd1]])*if_else(get_odds[[input$odd2]]==0,0,1)*max(1,get_odds[[input$odd3]]))+(max(1,get_odds[[input$odd2]])*if_else(get_odds[[input$odd3]]==0,0,1)*max(1,get_odds[[input$odd1]])))))
+        }),0)
+        values$b2 <- round(isolate({
+           if_else(get_odds[[input$odd1]] == 0 & get_odds[[input$odd3]]==0, as.numeric(input$wager), as.numeric(input$wager) * ((max(1,get_odds[[input$odd1]])*if_else(get_odds[[input$odd2]]==0,0,1)*max(1,get_odds[[input$odd3]]))/((max(1,get_odds[[input$odd2]])*if_else(get_odds[[input$odd1]]==0,0,1)*max(1,get_odds[[input$odd3]]))+(max(1,get_odds[[input$odd1]])*if_else(get_odds[[input$odd2]]==0,0,1)*max(1,get_odds[[input$odd3]]))+(max(1,get_odds[[input$odd2]])*if_else(get_odds[[input$odd3]]==0,0,1)*max(1,get_odds[[input$odd1]])))))
+        }),0)
+        values$b3 <- round(isolate({
+           if_else(get_odds[[input$odd2]] == 0 & get_odds[[input$odd1]]==0, as.numeric(input$wager) ,as.numeric(input$wager) * ((max(1,get_odds[[input$odd2]])*if_else(get_odds[[input$odd3]]==0,0,1)*max(1,get_odds[[input$odd1]]))/((max(1,get_odds[[input$odd2]])*if_else(get_odds[[input$odd1]]==0,0,1)*max(1,get_odds[[input$odd3]]))+(max(1,get_odds[[input$odd1]])*if_else(get_odds[[input$odd2]]==0,0,1)*max(1,get_odds[[input$odd3]]))+(max(1,get_odds[[input$odd2]])*if_else(get_odds[[input$odd3]]==0,0,1)*max(1,get_odds[[input$odd1]])))))
+        }),0)
+    
+if(input$fix3 == 'Y' & input$fix1=='N' & input$fix2 == 'N') {
+  
+  values$b3 <-  (as.numeric(input$wager) / get_odds[[input$odd3]])
+  values$b1 <-  (as.numeric(input$wager) - as.numeric(values$b3)) * (isolate(get_odds[[input$odd2]]) / (isolate(get_odds[[input$odd2]])+isolate(get_odds[[input$odd1]])))
+  values$b2 <-  (as.numeric(input$wager) - as.numeric(values$b3)) * (isolate(get_odds[[input$odd1]]) / (isolate(get_odds[[input$odd2]])+isolate(get_odds[[input$odd1]])))
+ }   
+        
+if(input$fix3 == 'Y' & input$fix2=='Y' & input$fix1 == 'N') {
+  values$b3 <-  round((as.numeric(input$wager) / get_odds[[input$odd3]]),0)
+  values$b2 <-  round((as.numeric(input$wager) / get_odds[[input$odd2]]),0)
+  values$b1 <-  round((as.numeric(input$wager)) - values$b2 - values$b3,0)
+   }
+
+if(input$fix3 == 'Y' & input$fix2=='Y' & input$fix1 == 'Y') {
+  values$b3 <-  round((as.numeric(input$wager) / get_odds[[input$odd3]]),0)
+  values$b2 <-  round((as.numeric(input$wager) / get_odds[[input$odd2]]),0)
+  values$b1 <-  round((as.numeric(input$wager) / get_odds[[input$odd1]]),0)
+   }
+
+if(input$fix3 == 'N' & input$fix1=='N' & input$fix2 == 'Y') {
+  values$b2 <-  (as.numeric(input$wager) / get_odds[[input$odd2]])
+  values$b1 <-  (as.numeric(input$wager) - as.numeric(values$b2)) * (isolate(get_odds[[input$odd3]]) / (isolate(get_odds[[input$odd3]])+isolate(get_odds[[input$odd1]])))
+  values$b3 <-  (as.numeric(input$wager) - as.numeric(values$b2)) * (isolate(get_odds[[input$odd1]]) / (isolate(get_odds[[input$odd3]])+isolate(get_odds[[input$odd1]])))
+  }
+
+if(input$fix3 == 'N' & input$fix1=='Y' & input$fix2 == 'N') {
+  values$b1 <-  (as.numeric(input$wager) / get_odds[[input$odd1]])
+  values$b2 <-  (as.numeric(input$wager) - as.numeric(values$b1)) * (isolate(get_odds[[input$odd3]]) / (isolate(get_odds[[input$odd3]])+isolate(get_odds[[input$odd2]])))
+  values$b3 <-  (as.numeric(input$wager) - as.numeric(values$b1)) * (isolate(get_odds[[input$odd2]]) / (isolate(get_odds[[input$odd3]])+isolate(get_odds[[input$odd2]])))
+  }
+        
+if(input$fix1 == 'Y' & input$fix2=='Y' & input$fix3 == 'N') {
+  values$b1 <-  round((as.numeric(input$wager) / get_odds[[input$odd1]]),0)
+  values$b2 <-  round((as.numeric(input$wager) / get_odds[[input$odd2]]),0)
+  values$b3 <-  round((as.numeric(input$wager)) - values$b2 - values$b1,0)
+   }
+
+        
+if(input$fix1 == 'Y' & input$fix2=='N' & input$fix3 == 'Y') {
+  values$b1 <-  round((as.numeric(input$wager) / get_odds[[input$odd1]]),0)
+  values$b3 <-  round((as.numeric(input$wager) / get_odds[[input$odd3]]),0)
+  values$b2 <-  round((as.numeric(input$wager)) - values$b3 - values$b1,0)
+   }
+        
+        
+        values$m1 <- round(isolate(get_odds[[input$odd1]] * values$b1),2)
+        values$m2 <- round(isolate(get_odds[[input$odd2]] * values$b2),2)
+        values$m3 <- round(isolate(get_odds[[input$odd3]] * values$b3),2)
+
+        values$text_no1 <-  textOutput("text_no1")     
+        
+    })
+    
+    
+
+       
+
+
+  
+  
+    # Display values entered
+    output$text_no1 <- renderText({
+        input$action_Calc
+        paste("Pgm No.: ", isolate(input$no1))
+    })
+    
+    output$text_odd1 <- renderText({
+        input$action_Calc
+        paste("Odds: ", isolate(input$odd1))
+    })
+    
+    output$text_fix1 <- renderText({
+        input$action_Calc
+        paste("Fixed Return: ", isolate(input$fix1))
+    })
+    
+    output$text_no2 <- renderText({
+        input$action_Calc
+        paste("Pgm No.: ", isolate(input$no2))
+    })
+    
+    output$text_odd2 <- renderText({
+        input$action_Calc
+        paste("Odds: ", isolate(input$odd2))
+    })
+    
+    output$text_fix2 <- renderText({
+        input$action_Calc
+        paste("Fixed Return: ", isolate(input$fix2))
+    })
+    
+    output$text_no3 <- renderText({
+        input$action_Calc
+        paste("Pgm No.: ", isolate(input$no3))
+    })
+    
+    output$text_odd3 <- renderText({
+        input$action_Calc
+        paste("Odds: ", isolate(input$odd3))
+    })
+    
+    output$text_fix3 <- renderText({
+        input$action_Calc
+        paste("Fixed Return: ", isolate(input$fix3))
+    })
+     
+    
+    output$text_wager <- renderText({
+        input$action_Calc
+        paste("Wager Amout: ", isolate(input$wager))
+    })
+        
+   
+    
+    # Display calculated values
+    
+    
+    output$text_b1 <- renderText({
+        if(input$action_Calc == 0) ""
+        else
+            paste("Bet Amount: $", values$b1)
+    })
+    
+    output$text_m1 <- renderText({
+        if(input$action_Calc == 0) ""
+        else 
+            paste("Payout: $", values$m1)
+    })
+    
+    output$text_b2 <- renderText({
+        if(input$action_Calc == 0) ""
+        else
+            paste("Bet Amount: $", values$b2)
+    })
+    
+    output$text_m2 <- renderText({
+        if(input$action_Calc == 0) ""
+        else 
+            paste("Payout: $", values$m2)
+    })
+    output$text_b3 <- renderText({
+        if(input$action_Calc == 0) ""
+        else
+            paste("Bet Amount: $", values$b3)
+    })
+    
+    output$text_m3 <- renderText({
+        if(input$action_Calc == 0) ""
+        else 
+            paste("Payout: $", values$m3)
+    }
+    
+    
+    
+    )
+    
+
+}
+
+
+
+shinyApp(ui=ui,server=server, options = list(height = 800))
+
+
+```
+
