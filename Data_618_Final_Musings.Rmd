@@ -1,0 +1,1282 @@
+---
+title: 
+author: 
+output:
+  html_document:
+    css: 
+    highlight: pygments
+    theme: cerulean
+    toc: false
+    toc_float: false
+---
+
+```{r  message=FALSE, warning=FALSE, echo=FALSE}
+library(tidyverse)
+library(skimr)
+library(ggthemes)
+library(viridis)
+library(DT)
+library(gt)
+library(paletteer)
+library(RColorBrewer)
+```
+
+
+```{r fig.width=12, fig.height=8, message=FALSE, warning=FALSE, echo=FALSE}
+
+format_table <- function(df){
+  
+  formatted_df <- df %>%  
+    gt() %>% 
+  data_color(
+    columns = vars(`Avg BankRoll`, AvgWin),
+    colors = scales::col_numeric(
+      # custom defined values - notice that order matters!
+      palette = c("#ffffff", "#f2fbd2", "#c9ecb4", "#93d3ab", "#35b0ab"),
+      domain = NULL
+    )
+  ) %>% 
+  data_color(
+    columns = vars(`Standard Deviation`, SDAvgWin),
+    colors = scales::col_numeric(
+      # custom defined values - notice that order matters!
+      palette = c("#35b0ab","#93d3ab","#c9ecb4","#f2fbd2","#ffffff"),
+      domain = NULL
+    )
+  ) %>% 
+  fmt_currency(
+    columns = vars(`Avg BankRoll`,`Standard Deviation`, AvgWin, SDAvgWin),
+    decimals = 2
+  ) %>% 
+  fmt_number(
+    columns = vars(AvgBets,AvgBetsWon, AvgBetsLost, AvgNoBet),
+    decimals = 0
+    ) %>%
+  tab_style(
+    style = list(
+      cell_borders(
+        sides = "left",
+        color = "black",
+        weight = px(3)
+      )
+    ),
+    locations = list(
+      cells_body(
+        columns = vars(`Avg BankRoll`, AvgWin)
+      )
+    )
+  )  %>% 
+  cols_label(
+    Strategy = " Strategy",
+    #skill = "Skill Level",
+   `Avg BankRoll` = "Avg. Bankroll",
+    `Standard Deviation` = "SD Bankroll"
+  ) %>%  
+  tab_header(
+    title = md("**Wager Simulation By Strategy and Skill Level - 100 Iterations**"),
+    subtitle = "Average Bankroll & Standard Deviation"
+  )
+
+
+  formatted_df    
+}
+
+
+```
+
+
+
+```{r fig.width=12, fig.height=8, message=FALSE, warning=FALSE, echo=FALSE}
+
+s_win <- function(entries, skill_level, field, win_payoff, wagered, winner, ...){
+  
+  win_payoff <- as.numeric(win_payoff)
+  field <- as.numeric(field)
+  skill_level <- as.numeric(skill_level)
+  winner <- str_trim(winner)
+  
+  
+  
+  p <- str_replace_all(entries,"([a-zA-Z|\\s']+)","")
+  p <- str_replace_all(p, '(\\.+0\\.)', '0.')
+  p <- strsplit(p, ',')
+  p <- unlist(p)
+  entries <- str_replace_all(entries,'(\\\\|.\\d+)','')
+  b <- strsplit(entries, ',')
+  b <- unlist(b)
+  outcome <- c(0,1)
+  
+  w <- sample(outcome, 1, replace=T, prob = c(1-skill_level, skill_level))
+  
+  if (field > 4) {
+    case_when(
+    w == 1 ~ ((wagered / 2) * (win_payoff/100)) - wagered,
+    w == 0 ~ -wagered,
+    TRUE ~ 0 
+  )
+   } else {
+    0  
+    }
+     
+}
+
+
+s_winH1 <- function(entries, skill_level, field, win_payoff, wagered, winner, exacta_payoff){
+  #Make sure inputs are numerics
+  win_payoff <- as.numeric(win_payoff)
+  field <- as.numeric(field)
+  skill_level <- as.numeric(skill_level)
+  exacta_payoff <- as.numeric(exacta_payoff)
+  
+  #Break out entry names and probabilities into b and p, respectively
+  p <- str_replace_all(entries,"([a-zA-Z|\\s']+)","")
+  p <- str_replace_all(p, '(\\.+0\\.)', '0.')
+  p <- strsplit(p, ',')
+  p <- unlist(p)
+  entries <- str_replace_all(entries,'(\\\\|.\\d+)','')
+  b <- strsplit(entries, ',')
+  b <- unlist(b)
+  
+  # Establish coin flie for picking a winner(1) or not(0)
+  outcome <- c(0,1)
+  
+  # w1 tells if we picked a winner we calculate the odds for the winner 
+  w1 <- sample(outcome, 1, replace=T, prob = c(1-skill_level, skill_level))
+  odds1 <- (((win_payoff/100) - 2) / 2)
+   
+   
+   # Indentify the hedge horse, 1 in this case
+   w2 <- sample(b, 1, replace=F, prob = p)
+   
+   # Get the index of the hedge horse and use the index to obtain probability
+   index2 <- match(w2, b)
+   p2 <- as.numeric(p[index2])
+   
+   # Calculate odds and payoff for hedge horse1 or horse 2
+   odds2 <- p2/(1-p2)
+   win_payoff2 <- (odds2 *2) + 2
+   
+   # Calculate the correct amount to wager on each horse
+   amt_wagered1 <- (odds2 / (odds1+odds2)) * wagered
+   amt_wagered2 <- (odds1 / (odds1+odds2)) * wagered
+
+  
+   # calculate net impact to bankroll
+ r<- if (field > 4) {
+    case_when(
+    w1 == 1 ~ ((amt_wagered1 / 2) * (win_payoff/100)) - amt_wagered1 -amt_wagered2,
+    w2 == winner ~ ((amt_wagered2 / 2) * win_payoff2) - amt_wagered2 -amt_wagered1,
+    TRUE ~ -wagered
+  )
+   } else {
+    0
+    }
+
+  r
+
+}
+
+
+s_winH2 <- function(entries, skill_level, field, win_payoff, wagered, winner, exacta_payoff){
+  #Make sure inputs are numerics
+  win_payoff <- as.numeric(win_payoff)
+  field <- as.numeric(field)
+  skill_level <- as.numeric(skill_level)
+  
+  exacta_payoff <- as.numeric(exacta_payoff)
+  
+  #Break out entry names and probabilities into b and p, respectively
+  p <- str_replace_all(entries,"([a-zA-Z|\\s']+)","")
+  p <- str_replace_all(p, '(\\.+0\\.)', '0.')
+  p <- strsplit(p, ',')
+  p <- unlist(p)
+  entries <- str_replace_all(entries,'(\\\\|.\\d+)','')
+  b <- strsplit(entries, ',')
+  b <- unlist(b)
+  
+  # Establish coin flie for picking a winner(1) or not(0)
+  outcome <- c(0,1)
+  
+  # w1 tells if we picked a winner we calculate the odds for the winner 
+  w1 <- sample(outcome, 1, replace=T, prob = c(1-skill_level, skill_level))
+  odds1 <- (((win_payoff/100) - 2) / 2)
+   
+   
+   # Indentify the hedge horse, 1 in this case
+   w <- sample(b, 2, replace=F, prob = p)
+   w2 <- w[1]
+   w3 <- w[2]
+   
+   # Get the index of the hedge horse and use the index to obtain probability
+   index2 <- match(w2, b)
+   index3 <- match(w3, b)
+   p2 <- as.numeric(p[index2])
+   p3 <- as.numeric(p[index3])
+   
+   # Calculate odds and payoff for hedge horse1 or horse 2
+   odds2 <- p2/(1-p2)
+   win_payoff2 <- (odds2 *2) + 2
+   
+   odds3 <- p3/(1-p3)
+   win_payoff3 <- (odds3 *2) + 2
+   
+   # Calculate the correct amount to wager on each horse
+   amt_wagered1 <- ((odds2 * odds3) / ((odds2 * odds3)+(odds1 * odds3)+(odds1 * odds2))) * wagered
+   amt_wagered2 <- ((odds1 * odds3) / ((odds2 * odds3)+(odds1 * odds3)+(odds1 * odds2))) * wagered
+   amt_wagered3 <- ((odds1 * odds2) / ((odds2 * odds3)+(odds1 * odds3)+(odds1 * odds2))) * wagered
+
+  
+   # calculate net impact to bankroll
+ r<- if (field > 6) {
+    case_when(
+    w1 == 1 ~ ((amt_wagered1 / 2) * (win_payoff/100)) - wagered,
+    w2 == winner ~ ((amt_wagered2 / 2) * win_payoff2) - wagered,
+    w3 == winner ~ ((amt_wagered3 / 2) * win_payoff3) - wagered,
+    TRUE ~ -wagered
+  )
+   } else {
+    0
+    }
+
+ r
+}
+
+
+s_winH28 <- function(entries, skill_level, field, win_payoff, wagered, winner, exacta_payoff){
+  #Make sure inputs are numerics
+  win_payoff <- as.numeric(win_payoff)
+  field <- as.numeric(field)
+  skill_level <- as.numeric(skill_level)
+  
+  exacta_payoff <- as.numeric(exacta_payoff)
+  
+  #Break out entry names and probabilities into b and p, respectively
+  p <- str_replace_all(entries,"([a-zA-Z|\\s']+)","")
+  p <- str_replace_all(p, '(\\.+0\\.)', '0.')
+  p <- strsplit(p, ',')
+  p <- unlist(p)
+  entries <- str_replace_all(entries,'(\\\\|.\\d+)','')
+  b <- strsplit(entries, ',')
+  b <- unlist(b)
+  
+  # Establish coin flie for picking a winner(1) or not(0)
+  outcome <- c(0,1)
+  
+  # w1 tells if we picked a winner we calculate the odds for the winner 
+  w1 <- sample(outcome, 1, replace=T, prob = c(1-skill_level, skill_level))
+  odds1 <- (((win_payoff/100) - 2) / 2)
+   
+   
+   # Indentify the hedge horse, 1 in this case
+   w <- sample(b, 2, replace=F, prob = p)
+   w2 <- w[1]
+   w3 <- w[2]
+   
+   # Get the index of the hedge horse and use the index to obtain probability
+   index2 <- match(w2, b)
+   index3 <- match(w3, b)
+   p2 <- as.numeric(p[index2])
+   p3 <- as.numeric(p[index3])
+   
+   # Calculate odds and payoff for hedge horse1 or horse 2
+   odds2 <- p2/(1-p2)
+   win_payoff2 <- (odds2 *2) + 2
+   
+   odds3 <- p3/(1-p3)
+   win_payoff3 <- (odds3 *2) + 2
+   
+   # Calculate the correct amount to wager on each horse
+   amt_wagered1 <- ((odds2 * odds3) / ((odds2 * odds3)+(odds1 * odds3)+(odds1 * odds2))) * wagered
+   amt_wagered2 <- ((odds1 * odds3) / ((odds2 * odds3)+(odds1 * odds3)+(odds1 * odds2))) * wagered
+   amt_wagered3 <- ((odds1 * odds2) / ((odds2 * odds3)+(odds1 * odds3)+(odds1 * odds2))) * wagered
+
+  
+   # calculate net impact to bankroll
+ r<- if (field > 7) {
+    case_when(
+    w1 == 1 ~ ((amt_wagered1 / 2) * (win_payoff/100)) - wagered,
+    w2 == winner ~ ((amt_wagered2 / 2) * win_payoff2) - wagered,
+    w3 == winner ~ ((amt_wagered3 / 2) * win_payoff3) - wagered,
+    TRUE ~ -wagered
+  )
+   } else {
+    0
+    }
+
+ r
+}
+
+
+
+s_winH1F1 <- function(entries, skill_level, field, win_payoff, wagered, winner, exacta_payoff){
+  #Make sure inputs are numerics
+  win_payoff <- as.numeric(win_payoff)
+  field <- as.numeric(field)
+  skill_level <- as.numeric(skill_level)
+  exacta_payoff <- as.numeric(exacta_payoff)
+  
+  #Break out entry names and probabilities into b and p, respectively
+  p <- str_replace_all(entries,"([a-zA-Z|\\s']+)","")
+  p <- str_replace_all(p, '(\\.+0\\.)', '0.')
+  p <- strsplit(p, ',')
+  p <- unlist(p)
+  entries <- str_replace_all(entries,'(\\\\|.\\d+)','')
+  b <- strsplit(entries, ',')
+  b <- unlist(b)
+  
+  # Establish coin flie for picking a winner(1) or not(0)
+  outcome <- c(0,1)
+  
+  # w1 tells if we picked a winner we calculate the odds for the winner 
+  w1 <- sample(outcome, 1, replace=T, prob = c(1-skill_level, skill_level))
+  odds1 <- (((win_payoff/100) - 2) / 2)
+   
+   
+   # Indentify the hedge horse, 1 in this case
+   w2 <- sample(b, 1, replace=F, prob = p)
+   
+   # Get the index of the hedge horse and use the index to obtain probability
+   index2 <- match(w2, b)
+   p2 <- as.numeric(p[index2])
+   
+   # Calculate odds and payoff for hedge horse1 or horse 2
+   odds2 <- p2/(1-p2)
+   win_payoff2 <- (odds2 *2) + 2
+   
+   # Calculate the correct amount to wager on each horse
+   amt_wagered1 <-   wagered - (wagered / odds2)
+   amt_wagered2 <-  (wagered / odds2)
+
+  
+   # calculate net impact to bankroll
+ r<- if (field > 6) {
+    case_when(
+    w1 == 1 ~ ((amt_wagered1 / 2) * (win_payoff/100)) - amt_wagered1 -amt_wagered2,
+    w2 == winner ~ ((amt_wagered2 / 2) * win_payoff2) - amt_wagered2 -amt_wagered1,
+    TRUE ~ -wagered
+  )
+   } else {
+    0
+    }
+
+  r
+
+}
+
+s_winH2F2 <- function(entries, skill_level, field, win_payoff, wagered, winner, exacta_payoff){
+  #Make sure inputs are numerics
+  win_payoff <- as.numeric(win_payoff)
+  field <- as.numeric(field)
+  skill_level <- as.numeric(skill_level)
+  exacta_payoff <- as.numeric(exacta_payoff)
+  
+  #Break out entry names and probabilities into b and p, respectively
+  p <- str_replace_all(entries,"([a-zA-Z|\\s']+)","")
+  p <- str_replace_all(p, '(\\.+0\\.)', '0.')
+  p <- strsplit(p, ',')
+  p <- unlist(p)
+  entries <- str_replace_all(entries,'(\\\\|.\\d+)','')
+  b <- strsplit(entries, ',')
+  b <- unlist(b)
+  
+  # Establish coin flie for picking a winner(1) or not(0)
+  outcome <- c(0,1)
+  
+  # w1 tells if we picked a winner we calculate the odds for the winner 
+  w1 <- sample(outcome, 1, replace=T, prob = c(1-skill_level, skill_level))
+  odds1 <- (((win_payoff/100) - 2) / 2)
+   
+   
+   # Indentify the hedge horse, 1 in this case
+   w <- sample(b, 2, replace=F, prob = p)
+   w2 <- w[1]
+   w3 <- w[2]
+   
+   # Get the index of the hedge horse and use the index to obtain probability
+   index2 <- match(w2, b)
+   index3 <- match(w3, b)
+   p2 <- as.numeric(p[index2])
+   p3 <- as.numeric(p[index3])
+   
+   # Calculate odds and payoff for hedge horse1 or horse 2
+   odds2 <- p2/(1-p2)
+   win_payoff2 <- (odds2 *2) + 2
+   
+   odds3 <- p3/(1-p3)
+   win_payoff3 <- (odds3 *2) + 2
+   
+   # Calculate the correct amount to wager on each horse
+   amt_wagered1 <-   wagered - (wagered / odds2) - (wagered / odds3)
+   amt_wagered2 <-  (wagered / odds2)
+   amt_wagered3 <-  (wagered / odds3)
+
+  
+   # calculate net impact to bankroll
+ r<- if (field > 6) {
+    case_when(
+    w1 == 1 ~ ((amt_wagered1 / 2) * (win_payoff/100)) - wagered,
+    w2 == winner ~ ((amt_wagered2 / 2) * win_payoff2) - wagered,
+    w3 == winner ~ ((amt_wagered3 / 2) * win_payoff3) - wagered,
+    TRUE ~ -wagered
+  )
+   } else {
+    0
+    }
+
+ r
+}
+
+
+
+
+s_winDerEx <- function(entries, skill_level, field, win_payoff, wagered, winner, exacta_payoff){
+ 
+  win_payoff <- as.numeric(win_payoff)
+  field <- as.numeric(field)
+  skill_level <- as.numeric(skill_level)
+  winner <- str_trim(winner)
+  
+  
+  p <- str_replace_all(entries,"([a-zA-Z|\\s']+)","")
+  p <- str_replace_all(p, '(\\.+0\\.)', '0.')
+  p <- strsplit(p, ',')
+  p <- unlist(p)
+  entries <- str_replace_all(entries,'(\\\\|.\\d+)','')
+  b <- strsplit(entries, ',')
+  b <- unlist(b)
+  outcome <- c(0,1)
+  
+  w <- sample(outcome, 1, replace=T, prob = c(1-skill_level, skill_level))
+  
+  if (field > 6) {
+    case_when(
+    w == 1 ~ ((wagered/field)  * (exacta_payoff/100)) - wagered,
+    w == 0 ~ -wagered,
+    TRUE ~ 0
+  )
+   } else {
+    0  
+    }
+     
+}
+
+
+s_winDerEx8 <- function(entries, skill_level, field, win_payoff, wagered, winner, exacta_payoff){
+ 
+  win_payoff <- as.numeric(win_payoff)
+  field <- as.numeric(field)
+  skill_level <- as.numeric(skill_level)
+  winner <- str_trim(winner)
+  
+  
+  p <- str_replace_all(entries,"([a-zA-Z|\\s']+)","")
+  p <- str_replace_all(p, '(\\.+0\\.)', '0.')
+  p <- strsplit(p, ',')
+  p <- unlist(p)
+  entries <- str_replace_all(entries,'(\\\\|.\\d+)','')
+  b <- strsplit(entries, ',')
+  b <- unlist(b)
+  outcome <- c(0,1)
+  
+  w <- sample(outcome, 1, replace=T, prob = c(1-skill_level, skill_level))
+  
+  if (field > 7) {
+    case_when(
+    w == 1 ~ ((wagered/field)  * (exacta_payoff/100)) - wagered,
+    w == 0 ~ -wagered,
+    TRUE ~ 0
+  )
+   } else {
+    0  
+    }
+     
+}
+
+
+get_losses <- function(Strategy, Value, field){
+  case_when(
+    Strategy == "Win" & Value < 0 ~ 1,
+    Strategy == "WinH1" & Value < 0 ~ 2,
+    Strategy == "WinH2" & Value < 0 ~ 3,
+    Strategy == "WinH1F1" & Value < 0 ~ 2,
+    Strategy == "WinH2F2" & Value < 0 ~ 3,
+    Strategy == "WinDerEx" & Value < 0 ~ as.numeric(field),
+    Strategy == "WinDerEx8" & Value < 0 ~ as.numeric(field),
+    TRUE ~ 0
+  )
+}
+
+
+wager_sim <- function(sim_df, skill, wager_unit){
+
+strategy_list <- list("s_Win","s_WinH1", "s_WinH2", "s_WinH1F1", "s_WinH2F2", "s_WinDerEx", "s_WinDerEx8", "s_winH28" )
+function_list <- list(s_win, s_winH1, s_winH2, s_winH1F1, s_winH2F2, s_winDerEx, s_winDerEx8, s_winH28)
+
+simulation <- map2_dfc(strategy_list, function_list, ~ sim_df %>%
+                      transmute(!! .x := .y(entries, skill, field, win_payoff, wager_unit, Winner, exacta_payoff))) %>%
+  bind_cols(df, .) %>% 
+  pivot_longer(
+   cols = starts_with("s_"),
+   names_to = "Strategy",
+   names_prefix = "s_",
+   values_to = "Value",
+   values_drop_na = TRUE
+ ) %>% 
+  arrange(Strategy) %>% 
+  filter(!is.na(win_payoff)) %>% 
+  select(race_code...1, Winner...2, win_payoff, exacta_payoff, field, Strategy, Value) %>% 
+  mutate(wager = rownames(.)) %>% 
+  select(wager, everything()) %>%
+  mutate(index = 1) %>% 
+  group_by(Strategy) %>% 
+  mutate(bankroll = cumsum(Value)) %>% 
+  mutate(n = cumsum(index)) %>% 
+  select(-wager, -index) %>% 
+  select(n, everything()) %>%
+  mutate(skill = skill*100) %>% 
+  mutate(skill = str_c("Skill:", skill, "%")) %>% 
+  rename(race_code=race_code...1,
+         winner=Winner...2) %>% 
+  ungroup() 
+  
+  df <- simulation %>% 
+  as_tibble() 
+  
+  df
+}
+
+
+```
+
+
+
+
+```{r fig.width=12, fig.height=8, message=FALSE, warning=FALSE, echo=FALSE}
+options(scipen=999)
+
+
+
+wagers <- read_csv('race_wagers.csv',col_name=TRUE)
+
+wagers <- wagers %>% 
+  select(race_code, wager_typ, wager_payoff)
+
+
+
+win_wagers <- wagers %>% 
+  filter(wager_typ == 'Win_w') %>% 
+  select(race_code, wager_payoff) %>% 
+  rename(win_payoff = wager_payoff)
+
+
+exacta_wagers <- wagers %>% 
+  filter(wager_typ == "Exacta") %>% 
+  select(race_code, wager_payoff) %>% 
+  rename(exacta_payoff = wager_payoff)
+
+
+
+starters <- read_csv('starters.csv',col_name=TRUE)
+starters <- as_tibble(starters)
+
+
+df <- starters %>% 
+  select(race_code, trk_code, race_nbr, pgm, horse, off_odds, p5) %>% 
+  filter(off_odds != 'NULL') %>%
+  filter(trk_code != "FL") %>% 
+  group_by(race_code) %>% 
+  ungroup() %>% 
+  mutate(prob = (as.numeric(off_odds)/100)/((as.numeric(off_odds)/100)+1)) %>%
+  mutate(horse = str_c(horse,'|', prob)) %>% 
+  mutate(race_code = str_replace(race_code,'_(\\d\\d)',str_c('_',str_pad(race_nbr,2,side=c("left"),pad='0')))) %>% 
+  group_by(race_code) %>%
+  arrange(prob) %>% 
+  mutate(new_col = horse, horse = first(horse, order_by = p5), p5 = first(p5, order_by = p5)) %>% 
+  group_by(horse, p5,.add = TRUE) %>% 
+  filter(!is.na(horse)) %>% 
+  summarise(entries = paste(new_col, collapse = ","),
+            field = n()) %>% 
+  mutate(winners_odds = horse) %>% 
+  mutate(winners_odds = str_extract(winners_odds,'(\\|(.*))')) %>% 
+  mutate(winners_odds = as.numeric(str_replace(winners_odds,"(\\|)",""))) %>% 
+  mutate(horse = str_extract(horse,'(.*\\|)')) %>% 
+  mutate(horse = str_replace(horse,"(\\|)","")) %>% 
+  rename(Winner = horse) %>% 
+  select(-p5) %>% 
+  left_join(win_wagers, by=c("race_code")) %>% 
+  left_join(exacta_wagers, by=c("race_code"))
+``` 
+
+
+```{r  fig.width=12, fig.height=8, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+
+for (i in seq(from = 0.15, to = 0.30, by=.05)) {
+
+skill_level <- i
+
+mydf <- wager_sim(df, i, 100)
+
+if (i==0.15){
+  sim_data <- mydf
+} else {
+  sim_data <- bind_rows(sim_data, mydf)
+}
+
+}
+
+
+for (j in seq(from = 1, to=100, by =1)){
+
+for (i in seq(from = 0.15, to = 0.30, by=.05)) {
+
+skill_level <- i
+
+mydf2 <- wager_sim(df, i, 100)
+
+if (i==0.15 & j ==1){
+  mydf2 <- mydf2 %>% 
+    mutate(sim = j)
+  
+  sim2_data <- mydf2
+} else {
+  mydf2 <- mydf2 %>% 
+    mutate(sim = j)
+  
+  sim2_data <- bind_rows(sim2_data, mydf2)
+}
+
+}
+
+}
+
+
+
+```
+
+
+```{r fig.width=12, fig.height=6, message=FALSE, warning=FALSE, echo=FALSE}
+sim2_tab15 <- sim2_data %>% 
+  mutate(n = 1) %>% 
+  group_by(sim,Strategy, skill) %>% 
+  summarise(bankRoll = sum(Value),
+            bets = sum(n[Value!=0]),
+            betswon = sum(n[Value>0]),
+            avgWin = sum(Value[Value>0])/sum(n[Value>0]),
+            betslost = sum(n[Value<0]),
+            nobet = sum(n[Value==0])
+            ) %>% 
+  group_by(Strategy, skill) %>% 
+  summarise(AvgBets=mean(bets),AvgBetsWon=mean(betswon),AvgBetsLost=mean(betslost),AvgNoBet=mean(nobet), `Avg BankRoll`=mean(bankRoll), `Standard Deviation` = sd(bankRoll), AvgWin= mean(avgWin), SDAvgWin= sd(avgWin)) %>% 
+  arrange(skill, Strategy) %>% 
+  ungroup() %>%
+  filter(skill=='Skill:15%') %>% 
+  select(-skill) %>% 
+  arrange(desc(`Avg BankRoll`))
+
+
+
+sim2_tab20 <- sim2_data %>% 
+  mutate(n = 1) %>% 
+  group_by(sim,Strategy, skill) %>% 
+  summarise(bankRoll = sum(Value),
+            bets = sum(n[Value!=0]),
+            betswon = sum(n[Value>0]),
+            avgWin = sum(Value[Value>0])/sum(n[Value>0]),
+            betslost = sum(n[Value<0]),
+            nobet = sum(n[Value==0])
+            ) %>% 
+  group_by(Strategy, skill) %>% 
+  summarise(AvgBets=mean(bets),AvgBetsWon=mean(betswon),AvgBetsLost=mean(betslost),AvgNoBet=mean(nobet), `Avg BankRoll`=mean(bankRoll), `Standard Deviation` = sd(bankRoll), AvgWin= mean(avgWin), SDAvgWin= sd(avgWin)) %>% 
+  arrange(skill, Strategy) %>% 
+  ungroup() %>%
+  filter(skill=='Skill:20%') %>% 
+  select(-skill) %>% 
+  arrange(desc(`Avg BankRoll`))
+
+
+
+sim2_tab25 <- sim2_data %>% 
+  mutate(n = 1) %>% 
+  group_by(sim,Strategy, skill) %>% 
+  summarise(bankRoll = sum(Value),
+            bets = sum(n[Value!=0]),
+            betswon = sum(n[Value>0]),
+            avgWin = sum(Value[Value>0])/sum(n[Value>0]),
+            betslost = sum(n[Value<0]),
+            nobet = sum(n[Value==0])
+            ) %>% 
+  group_by(Strategy, skill) %>% 
+  summarise(AvgBets=mean(bets),AvgBetsWon=mean(betswon),AvgBetsLost=mean(betslost),AvgNoBet=mean(nobet), `Avg BankRoll`=mean(bankRoll), `Standard Deviation` = sd(bankRoll), AvgWin= mean(avgWin), SDAvgWin= sd(avgWin)) %>% 
+  arrange(skill, Strategy) %>% 
+  ungroup() %>%
+  filter(skill=='Skill:25%') %>% 
+  select(-skill) %>% 
+  arrange(desc(`Avg BankRoll`))
+
+
+sim2_tab30 <- sim2_data %>% 
+  mutate(n = 1) %>% 
+  group_by(sim,Strategy, skill) %>% 
+  summarise(bankRoll = sum(Value),
+            bets = sum(n[Value!=0]),
+            betswon = sum(n[Value>0]),
+            avgWin = sum(Value[Value>0])/sum(n[Value>0]),
+            betslost = sum(n[Value<0]),
+            nobet = sum(n[Value==0])
+            ) %>% 
+  group_by(Strategy, skill) %>% 
+  summarise(AvgBets=mean(bets),AvgBetsWon=mean(betswon),AvgBetsLost=mean(betslost),AvgNoBet=mean(nobet), `Avg BankRoll`=mean(bankRoll), `Standard Deviation` = sd(bankRoll), AvgWin= mean(avgWin), SDAvgWin= sd(avgWin)) %>% 
+  arrange(skill, Strategy) %>% 
+  ungroup() %>%
+  filter(skill=='Skill:30%') %>% 
+  select(-skill) %>% 
+  arrange(desc(`Avg BankRoll`))
+  
+```
+
+
+
+
+```{r fig.width=12, fig.height=8, message=FALSE, warning=FALSE, echo=FALSE}
+
+stat_data <- sim_data %>%
+  filter(Strategy == "Win" & skill=="Skill:15%") %>% 
+  select(-skill, -bankroll, -Strategy) %>% 
+  select(-winner, -Value, -n) %>% 
+  mutate(Track_Code = str_extract(race_code,"([A-Z]{2,3})(?:00)$")) %>% 
+  mutate(Track_Code = str_replace(Track_Code,"00","")) %>%
+  select(-race_code) %>% 
+  select(Track_Code, everything()) %>% 
+  mutate(Track_Code = if_else(Track_Code == "AQU" |Track_Code == "GP" |Track_Code == "BEL" |Track_Code == "SAR" |Track_Code == "SA" |Track_Code == "GPW" |Track_Code == "DMR" |Track_Code == "WO" |Track_Code == "CD",Track_Code, "Other"))
+ 
+
+stat_data_tab <- stat_data %>% 
+  mutate(n = 1) %>% 
+  select(n, everything()) %>% 
+  as_tibble() %>% 
+  group_by(Track_Code) %>% 
+  summarise(across(
+    .cols = is.numeric,
+    .fns = list(Sum=sum, Mean = mean, Min = min, Max = max), na.rm =TRUE,
+    .names = "{col}_{fn}"
+  )) %>% 
+  filter(Track_Code != "BTP" & Track_Code != "DED" & Track_Code != "CBY" & Track_Code != "FNO" & Track_Code != "RP" & Track_Code != "SR" & Track_Code != "TIM" & Track_Code != "ZIA") %>% 
+  arrange(desc(n_Sum)) %>% 
+  select(-n_Mean, -n_Min, -n_Max, -win_payoff_Sum, -exacta_payoff_Sum, -field_Sum) %>% 
+  mutate(win_payoff_Mean = win_payoff_Mean/100,
+         win_payoff_Min = win_payoff_Min/100,
+         win_payoff_Max = win_payoff_Max/100,
+         exacta_payoff_Mean = exacta_payoff_Mean/100,
+         exacta_payoff_Min = exacta_payoff_Min/100,
+         exacta_payoff_Max = exacta_payoff_Max/100) %>% 
+  rename(Trk = Track_Code,
+         Count = n_Sum) %>% 
+  gt() %>% data_color(
+    columns = vars(win_payoff_Mean,win_payoff_Max,win_payoff_Min),
+    colors = scales::col_numeric(
+      # custom defined values - notice that order matters!
+      palette = c("#ffffff", "#f2fbd2", "#c9ecb4", "#93d3ab", "#35b0ab"),
+      domain = NULL
+    )
+  ) %>% 
+  data_color(
+    columns = vars(exacta_payoff_Mean, exacta_payoff_Max,exacta_payoff_Min),
+    colors = scales::col_numeric(
+      # custom defined values - notice that order matters!
+      palette = c("#ffffff", "#f2fbd2", "#c9ecb4", "#93d3ab", "#35b0ab"),
+      domain = NULL
+    )
+  ) %>% 
+  data_color(
+    columns = vars(field_Mean, field_Min, field_Max),
+    colors = scales::col_numeric(
+      # custom defined values - notice that order matters!
+      palette = c("#ffffff", "#f2fbd2", "#c9ecb4", "#93d3ab", "#35b0ab"),
+      domain = NULL
+    )
+  ) %>% 
+  fmt_currency(
+    columns = vars(win_payoff_Mean,win_payoff_Max,win_payoff_Min,exacta_payoff_Mean, exacta_payoff_Min, exacta_payoff_Max),
+    decimals = 2
+  ) %>%
+  fmt_number(
+    columns = vars(field_Mean, field_Min, field_Max),
+    decimals = 2
+    ) %>%
+  cols_align(
+    align = "right",
+    columns = vars(win_payoff_Mean,win_payoff_Max,win_payoff_Min,exacta_payoff_Mean, exacta_payoff_Min, exacta_payoff_Max)
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_borders(
+        sides = "left",
+        color = "black",
+        weight = px(3)
+      )
+    ),
+    locations = list(
+      cells_body(
+        columns = vars(win_payoff_Mean, exacta_payoff_Mean,field_Mean)
+      )
+    )
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_borders(
+        sides = "bottom",
+        color = "black",
+        weight = px(3)
+      )
+    ),
+    locations = list(
+      cells_column_labels(
+        columns = gt::everything()
+      )
+    )
+  ) %>% 
+  tab_spanner(
+    label = "Win Wagers",
+    columns = vars(
+     win_payoff_Mean, win_payoff_Min, win_payoff_Max)
+  ) %>% 
+  tab_spanner(
+    label = "Exacta Wagers",
+    columns = vars(
+     exacta_payoff_Mean, exacta_payoff_Min, exacta_payoff_Max)
+  ) %>% 
+  tab_spanner(
+    label = "Field Size",
+    columns = vars(
+     field_Mean, field_Min, field_Max)
+  ) %>% 
+  cols_label(
+    Trk = "Track",
+    win_payoff_Mean = "Mean",
+    win_payoff_Min = "Minimum",
+    win_payoff_Max = "Maximum",
+    exacta_payoff_Mean = "Mean",
+    exacta_payoff_Min = "Minimum",
+    exacta_payoff_Max = "Maximum",
+    field_Mean = "Mean",
+    field_Min = "Minimum",
+    field_Max = "Maximum"
+  ) %>% 
+  tab_header(
+    title = md("**Wager Hedge Analysis - Summary Data Statistics**"),
+    subtitle = "Exploring Win Wager, Exacta Wagers and Field Size"
+  )
+  
+
+```
+
+
+
+```{r fig.width=12, fig.height=8, message=FALSE, warning=FALSE, echo=FALSE}
+
+field_data <- stat_data %>% 
+  select(field, win_payoff, exacta_payoff) %>% 
+  pivot_longer(!field, names_to = "Var", values_to = "Val") %>% 
+  mutate(Var =str_replace(Var,"_payoff","")) %>% 
+  mutate(Val = Val / 100)
+  
+
+f <-  ggplot(aes(y=Val, x=as.factor(field), fill=Var), data=field_data) +
+    geom_boxplot() + ylim(0,500) + facet_wrap(~Var, scales="free", ncol=2) + 
+    theme_fivethirtyeight() + stat_summary(fun.y=mean, geom="point", shape=20, size=4, color="steelblue", fill="steelblue") +
+    labs(title = "Wager Payoffs by Type and Field", subtitle= 'Could Field Size Impact Betting Strategies') 
+    
+#f + scale_colour_brewer(palette = "Blues") 
+  
+```
+
+
+
+
+
+```{r fig.width=12, fig.height=8, message=FALSE, warning=FALSE, echo=FALSE}
+
+
+# Create additional content
+sim_data <- sim_data %>% 
+  mutate(wins = if_else(Value >=0,1,0)) %>% 
+  mutate(losses = if_else(Value <0,1,0))
+
+
+v <- sim_data %>%    
+  ggplot(aes(x=n, y=bankroll, group=Strategy, color=Strategy)) +
+  geom_line(size=1.2) + facet_wrap(.~skill) +
+  theme_fivethirtyeight() +
+  labs(title = "Bankroll By Strategy and Skill", subtitle = "Bankroll Growth Over Number of Wagers") +
+  guides(colour = guide_legend(nrow = 1))
+
+#v 
+
+```
+
+
+
+
+
+```{r fig.width=12, fig.height=8, message=FALSE, warning=FALSE, echo=FALSE}
+
+h <- ggplot(sim_data, aes(x=Strategy, y=losses, fill=Strategy)) + 
+  geom_bar(stat = "identity") +  facet_wrap(~skill) +  theme_fivethirtyeight() +
+  labs(title = "Losses by Strategy and Skill", subtitle = "More Losses Means More Bets Spread Over Same $1000 Unit") +
+  theme(legend.position = "none") 
+
+
+#h + scale_colour_brewer(palette = "Blues") 
+  
+```
+
+
+```{r fig.width=12, fig.height=8, message=FALSE, warning=FALSE, echo=FALSE}
+
+b <- sim_data %>%
+  ggplot( aes(x=Strategy, y=Value, fill=Strategy)) +
+    geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim = quantile(sim_data$Value, c(0.15, 0.85))) + facet_wrap(~skill) +
+    theme_fivethirtyeight() + stat_summary(fun.y=mean, geom="point", shape=20, size=4, color="black", fill="black") +
+    theme(legend.position="none") +
+    labs(title = "Net Wager Values By Strategy and Skill", subtitle = "Black Dot Represents Mean Value - Outliers Suppressed") +
+    xlab("")
+
+#b + scale_colour_brewer(palette = "Blues") 
+
+```
+
+
+
+```{r fig.width=12, fig.height=8, message=FALSE, warning=FALSE, echo=FALSE}
+
+c <- sim_data %>%
+  ggplot( aes(x=skill, y=Value, fill=skill)) +
+    geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim = quantile(sim_data$Value, c(0.15, 0.85))) + facet_wrap(~Strategy) +
+    theme_fivethirtyeight() + stat_summary(fun.y=mean, geom="point", shape=20, size=4, color="black", fill="black") +
+    theme(legend.position="none") +
+    labs(title = "Net Wager Values By Strategy and Skill", subtitle = "Black Dot Represents Mean Value; Black Bar Median - Outliers Suppressed") +xlab("")
+
+
+
+```
+
+
+<hr class="my-4">
+
+### Data 618 - Final Project 
+#### Professor Dr. Agnieszka Chomicz-Grabowska
+
+<div class="jumbotron">
+  </br>
+  <h3 class="display-3">Can Hedging and Derivatives Improve Horse Race Wager Returns</h3>
+  <p class="lead">An Analysis of Hedging and Derivative Strategies For Horseplayers</p>
+  <hr class="my-4">
+  <p>Author: James Mundy</p>
+  <p>Date: December 8, 2020 </p>
+  <h3 class="display-3">Abstract</h3>
+  </br>
+<p>In this paper I investigate the role of hedging and derivatives in horseplayer investment returns and explore the possibility of employing these tools in a machine learning-based betting engine. I utilized 4080 races and related race results to investigate, through simulation, how seven hedging and derivative strategies fared against a simple win bet strategy.  Through my analysis, I determined that hedging and derivative strategies can improve horseplayer returns and I identified some drivers that influence the success or failure of a particular strategy.  Finally, I uncovered preliminary evidence and additional research avenues that could support employing hedging and derivatives in a machine learning-based wagering betting engine.</p>
+  </br>
+<p> __Keywords:__ Hedge, Derivatives, Horse Racing, Betting Strategy, Bankroll Total Returns, Betting Engine, Machine Learning</p>
+  </br>
+  </br>
+</div>
+
+
+### Introduction
+<hr class="my-4">
+<p style="font-size:17px;">A winning day at the racetrack is the goal of horseplayers of all skill levels. First-time players and expert handicappers alike strive to go home a winner. This paper seeks to determine if hedging and/or derivatives can help horseplayers achieve their investment objective. Hedging and derivatives are often associated with financial markets, but these tools can also be applied to racetrack betting markets:</p>
+
+<ul style="font-size:17px">
+<li>purchase "insurance" against your key horse losing to a one competing horse</li>
+<li>find a more attractive wagering pool to express your handicapping opinion</li>
+<li>pursue arbitrage opportunities</li>
+</ul>
+
+<p style="font-size:17px;">My motivation for this analysis is to advance my aspiration to construct a machine learning-based wagering system that is able to optimize betting opportunities and returns given a set of races, a wagering menu and a handicapping opinion on what horse will win the races.  Let's see if hedging and derivatives play a role in this quest.</p>
+
+
+### Literature Review
+<hr class="my-4">
+<p style="font-size:17px;"> The Literature Review is broken down into two primary groups:</p>
+<p style="font-size:17px;"> __Simple Win-bet Strategies employed in papers aimed a picking winning horses.__  These strategies typically called for the identification of value - A situation where the projected payoff was disproportionately higher than the horses true chances of winning.</p>
+
+<p style="font-size:17px;"> __1981 Henry__ described the outcome of races as being the consequence of a stochastic ordering of the permutations which define the outcome of a race. Henry also developed formulas. Henry’s formulas were better at predicting win, place and show runners, but also were significantly more challenging from a mathematical perspective.</p>
+<p style="font-size:17px;"> In __1986, Bolton and Chapman__ performed a study on 200 races from five U.S. tracks.  The study employed 10 basic handicapping variables yielded returns of approximately 3.3% utilizing a simple win-bet wagering strategy.</p>
+<p style="font-size:17px;"> In __1994, Benter__ published Computer Based Horse Race Handicapping and Wagering Systems: A Report.  This study utilized Hong Kong racing data and employed at least 20 sophisticated independent handicapping variables. Benter clearly demonstrated that a computerized handicapping system can beat the races. The author stated that at least at sometimes, at some tracks, a statistically derived fundamental handicapping model can achieve a significant positive expectation.  It should be noted that prior to writing his paper, Mr. Benter had spent the previous five years in Hong Kong developing a handicapping team and model. In 2019, Mr. Benter was featured in the Bloomberg article, The Gambler Who Cracked the Horse Race Code – A Billion Dollars Later He Tells His Story.</p>
+<p style="font-size:17px;"> In __2008, Chapman__, published Still Searching For Positive Returns At The Track: Empirical Results From 2,000 Hong Kong Races.  Chapman utilized 20 sophisticated handicapping variables modeled upon the Benter study and produced returns in excess of 20% employing a simple win-bet wagering strategy.</p>
+</br>
+
+<p style="font-size:17px;"> __Horse racing hedging and derivatives.__</p>
+
+<p style="font-size:17px;"> In __2011, CXWong published Precision - Statistical and Mathematical Methods in Horse Racing.__  Chapter 8 introduces the concepts of hedging and derivatives as well as the mathematics behind horse racing hedging strategies.  The chapter goes own to introduces derivatives and how alternative wager pools can be utilize to simulate a win wagers.</p>
+<p style="font-size:17px;"> In __September 2016 The College Mathematics Journal , Vol. 47, No. 4 published Horse Racing Odds: Can You Beat the Track by Hedging Your Bets? by Joel Pasternack and Stewart Venit.__  This paper develops a formula that provides a bettor the means to determine if its possible, by betting the correct amount on each horse in a race (given odds for each horse), to win money regardless of the outcome of the race.  Converting the given odds to probabilities and summing those probabilities yields an easily calculated parameter that indicates whether the answer to this question is “yes” or “no.” This parameter also determines the percentage of the total amount bet on the race returned to
+the winning bettors and the percentage retained by the track.</p>
+
+
+### Research Questions
+<hr class="my-4">
+<p style="font-size:17px;"> From my analysis I propose the following research questions. </p>
+<p style="font-size:17px;"> __Is it possible to improve racetrack betting returns by employing hedging and/or derivative strategies.__</p>
+<p style="font-size:17px;">I believe hedging and derivatives have the potential to mitigating losses, but question if these strategies can actually increase returns owing to the cost of hedging (more losing wagers) and a smaller percentage of the betting unit being invested on the key horse. </p>
+
+<p style="font-size:17px"> __What are the key factors that determine the success or failure of the hedging and derivative strategies.__ </p>
+<p style="font-size:17px">I believe lower skilled horseplayers are likely to benefit from hedging and derivative more than the accomplished horseplayers.</p>
+
+<p style="font-size:17px"> __Are hedging and derivative strategies ingredients to a successful machine learning wagering engine.__ </p>
+
+<p style="font-size:17px;">Other horse race and greyhound wager studies have found utilizing exotic wager increase financial returns. I believe the use of exotic wagers such as exactas or daily doubles may also benefit the hedging or derivative strategies.</p>
+
+### Experimental Methodology
+<hr class="my-4">
+<p style="font-size:17px;"> This analysis compares the results of a straight win bet strategy to competing hedging and derivative strategies. The alternative betting strategies were applied to a sample of 4080 races that included win bet and exacta payoffs, off odds for all horses, race results and field sizes (number of race entrants).  Simulated wagers were made and net wager results logged and analyzed to determine if any of the hedge and/or derivative strategies could outperform the straight win bet strategy - __bet 1 unit ($100) on the key horse__.</p>
+
+#### Hedging and Derivative Strategies
+
+<p style="font-size:17px;">This section introduces the hedging and derivative strategies.  Initially the following five strategies were compared to the straight win bet strategy. </p>
+
+<p style="font-size:17px;"></p>
+
+<p style="font-size:17px;">(a.) __WinH1__ - The WinH1 strategy includes a key horse (the horse the horseplayer thinks will win) and one hedge horse (The horse the horseplayer perceives as the biggest threat to beat her key horse).  This strategy calls for 2 bets that total to the betting unit ($100 is the betting unit utilized). The amount bet on each horse is calculated so that the horseplayer gets the same return no matter which horse wins.</p>
+<p style="font-size:17px;"> (b.) __WinH2__ - This strategy is similar to WinH1, with the exception that there is 1 key horse and 2 hedge horses.  This strategy calls for three bets that total $100 dollars. Again, the amount bet on each horse is calculated to ensure the same payout no matter which of the three horses wins. This strategy may be more likely to be employed in races with more horses. </p>
+<p style="font-size:17px;"> (c.) The __WinH1F1__ strategy is similar to the WinH1 strategy. Both strategies have a key horse and a hedge horse. In this strategy, however, the amount wagered on the hedge horse is calculated to result in a payout equal to the betting unit ($100) if the hedge horse wins. This strategy, when compared to the WinH1 strategy, results in a smaller portion of the wager being applied to the hedge horse and a larger portion to the key horse.</p>
+<p style="font-size:17px;">(d.) The __WinH1F2__ strategy bears the same relationship to the WinH2 as the WinH1F1 bore to the WinH1. This strategy has 1 key horse and two hedges horses. The portion of the unit bet applied to the hedge horses is calculated to yield an amount equal to the bet, should one of the hedge horses win. Like WinH1F1, this strategy results in a relatively larger portion of the bet being allocated to the key horse when compared to the WinH2 strategy. </p>
+<p style="font-size:17px;">(e.) The __WinDerEx__ strategy, unlike the prior strategies is a derivative strategy. This strategy simulates a win bet by making an exacta wager (In an exacta the horseplayer pick the first place and second place horses in the correct order.) with the key horse in the first position and __all__ remaining horses in the second position. Therefore if the key horse wins the race the bettor is assured of a winning wager - just like a win bet.  This strategy will have the same number of wagers as there are horses in the race minus 1. The percentage of the unit bet applied to each wager is equal to the unit wager divided by the number of wagers (equal to field size minus one).</p>
+
+<p style="font-size:17px;">Other key aspects of the methodology employed by this paper follow:</p>
+
+#### Field Size
+
+<p style="font-size:17px;">  Each of the above strategies also has a `field size` variable.  The field (number of horses in the race) has to meet a specified minimum, otherwise no bet will be placed. For straight win bets there has to be four or more horses in the race to make a wager, for strategies with 1 hedge horse there had to be at least five horses in the race to make a wager. Six or more horses are required to wager for strategies with 2 hedge horses and for the WinDerEx strategy. </p>
+
+#### Skill Level 
+
+<p style="font-size:17px;">To capture the varying skill levels of horseplayers, four different skill levels (15%, 20%, 25%, 30%) were applied to the  wagering strategies. This produced 24 wagering simulation results to analyze.  Skill level can be thought of as a horseplayer's long-term success rate at correctly picking the winning horse. The 15% investor could be thought of as a novice while the 30% investor would be considered an accomplished racetrack investor.</p>
+
+
+#### Key Horse 
+<p style="font-size:17px;">The focus of this paper is not picking the winning horse, so the determination of the key horse relied upon Rs sample function and a skill level. The sample function was utilized to determine if the key horse won the race: `sample(0:1, p=c(1-skill_level,skill_level))`. Where 0:1 means the function returns a 0 or 1, 0s are returned (1 - skill_level) percent and 1s are returned skill_level percent. Accordingly, if the sample function results in a zero (0) the key horse lost the race and a result of one means the key horse won the race.</p>
+
+
+#### Hedge Horse
+<p style="font-size:17px;">The sample function was also used to determine if the hedge horse won the race.  In the case of the hedge horses the sample function was only employed if the key horse's sample function produced a 0. In this case, the sample function was employed as set forth in Figure 1 below: </p>
+
+
+
+#### Figure 1. Hedge Horse Sample Function (hedging two horses)
+
+```{r eval=FALSE}
+
+sample(b, 2, replace=F, prob = p)
+ 
+        #   where b = a vector of horses in the race
+        #   2 is the number of horse to return (matches the number of hedge horses)
+        #   p = a vector of odds converted to probabilities for each horse
+        #   and replacement is set to false so that once a horse is chosen it can't be chosen a second
+```
+
+<p style="font-size:17px;">The horses drawn from the sample function were compared to the actual winner of the race to determine if the hedge horse won the race.  </p>
+   
+#### Strategy and Simulation Implementation
+
+<p style="font-size:17px;">The `purrr` package and `pmap` function provided the functionality to implement the strategies and wagering simulations.  An overview of the strategy and simulation code is set forth below. A for loop provides alternative skill levels and iterates over two lists and a data frame of historical races. The lists include a list of strategy names and a list of the related functions that produces the net wager result for each wagering strategy given the skill level.  The net wager results are calculated by the functions included in the list of functions.  See Figure 2.</p>
+
+#### Figure 2. Simulation Function Excerpt
+
+```{r eval=FALSE}
+
+for (i in seq(from = 0.15, to = 0.30, by=.05)) {
+  
+strategy_list <- list("s_Win","s_WinH1", "s_WinH2", "s_WinH1F1", "s_WinH2F2", "s_WinDerEx", "s_WinDerEx8", "s_winH28" )  # Strategy list
+function_list <- list(s_win, s_winH1, s_winH2, s_winH1F1, s_winH2F2, s_winDerEx, s_winDerEx8, s_winH28)  # Function List
+  
+skill_level <- i
+
+simulation <- map2_dfc(strategy_list, function_list, ~ sim_df %>%  # sim_df is the historical race data of 4080 races and results
+                      transmute(!! .x := .y(entries, skill_level, field, win_payoff, wager_unit, Winner, exacta_payoff))) #these are function inputs
+
+bind_rows(blank_row, simulation)  # This binds the results of the various strategy into one dataframe
+}
+```
+
+
+ 
+
+### Data Set
+<hr class="my-4">
+<p style="font-size:17px;">Data was obtained from Time Form US ("TFUS").  TFUS is a leading provider of horse racing data, including past performances and race charts. Data was obtained from race charts from North American thoroughbred racetracks. Specifically, the data is comprised of 12,741 win bet and exacta bet wager results and payoffs. </p>
+
+<p style="font-size:17px;">The win bet and exacta bet data was then joined to the corresponding horse entry data and then filtered to only retain races with complete track, horse, odds, field size and related win and exacta wager information and results.  The final data set was comprised of 4,080 complete records that were utilized in the analysis. The data table below sets forth a sample of the data frame produced by the simulation. Summary win bet, exacta bet and field size statistics obtained from the data are provided in the Wager Hedge Analysis - Summary Data Statistic table below. </p>
+
+#### Figure 3. Wager and Horse Data table
+</br>
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+datatable(head(sim_data,n=100))
+```
+
+
+#### Figure 4. Wager Hedge Analysis - Summary Data Statistics
+</br>
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+stat_data_tab
+
+```
+
+</br>
+
+### Exploratory Analysis 
+<hr class="my-4">
+<p style="font-size:17px;">I conducted exploratory data analysis  to inform the analysis. Figure 5 below illustrates the payoffs for exacta and win wagers given different race field sizes. Both exacta wagers and win bets demonstrate increased payouts as the field size increase.  In the case of exacta wagers the increase is pronounced as field size increases above six horses. Win bets have a similar pattern, however, the increase is less pronounced. </p>
+
+#### Figure 5. Win and Exacta Bet Payoff By Field Size
+
+```{r fig.width=10, fig.height=6, echo=FALSE, warning=FALSE, message=FALSE}
+f
+```
+
+</br>
+
+<p style="font-size:17px;">As a result of these findings, I increased the field size parameter for all wager strategies. This change had an overall positive impact on wager results. Additionally, two additional strategies were added to exploit the higher returns provided by big fields.</p>
+
+<p style="font-size:17px;">The __WinH28__ strategy is identical to the __WinH2__ with the exception that wagers are only made when there are 8 or more horses in the race. </p>
+
+<p style="font-size:17px;"> The __WinDerEx8__ strategy is identical to the __WinDerEx__ with the exception that wagers are only placed if there are 8 or more horses in the race.</p>
+
+<p style="font-size:17px;">Both strategies seek to take advantage of the higher payoffs associated with large fields presented in Figure 4.  Additionally, these strategies will result in a smaller number of bets placed.</p>
+
+</br>
+
+### Experimental Findings and Discussion
+<hr class="my-4">
+<p style="font-size:17px;"> I executed a single wager simulation to show the performance of each strategy when applied to 4080 races under four different skill levels. Results are set forth in Figure 6.  Additionally, to understanding the true long-term performance of the strategies, I ran the simulation 100 times under each of the skill level and calculated the resulting average bankrolls, standard deviations and other pertinent metrics.  A discussion of my findings follows.</p>
+
+<p style="font-size:17px;"> Figure 6 sets forth the results of a single simulation iteration at four different skill levels. This visual provides the first hint that the basic win-bet may not always be the most lucrative strategy.  At 15% skill level for this single simulation, only three strategies, WinDerEx8, WinDerEx8 and WinH1F1, had a positive net bankroll. The win bet strategy was in positive territory for much of the simulation, but fell short of breakeven by the end. At 20%, 6 of the 8 strategies are in positive territory, but the two derivative strategies still occupied the top spots. The win bet strategy and the WinH1F1 were both solidly in the black, while the WinH1 and the WinH2F2 just made it into positive territory.  The WinH2 and WinH28 strategies remained remained in the red.  As we move past the 20% skill level, we see all strategies boasting positive net bankrolls. It also appears that the WinH2 and WinH28 are consistently poor performing strategies. In fact, these two strategies were only solidly in the positive at a 30% skill level. </p>
+
+<p style="font-size:17px;">Focusing on the win bet strategy, we see that after posting a negative net bankroll at 15%, win bet performance improved steadily with skill level, returning the third highest return at 20% and earning top honors thereafter.</p>
+
+<p style="font-size:17px;">Results from the single simulation are directionally instructive, however, its the long-run simulation results that will provide more meaningful insight into the alternative betting strategies.</p>
+
+#### Figure 6. Single Iteration Simulation Results By Skill Level
+
+```{r fig.width=10, fig.height=6, echo=FALSE, warning=FALSE, message=FALSE}
+v
+```
+
+</br>
+
+#### Long-Run Simulation Results (100 iterations)
+
+</br>
+
+#### 15% Skill Level
+<hr class="my-4">
+<p style="font-size:17px">At the 15% skill level, the WinDerEx8 (Simulated win bet through an exacta wager comprised of the key horse in the win slot and all remaining horses in the place slot) strategy returned a positive net bankroll.  The WinDerEx8 strategy was added to the list of strategies after seeing the positive relationship between exacta payoffs and field size.  This strategy only makes wagers when there are eight or more horses in the race. WinExDer was the second best performing strategy, posting a `$825` net bankroll and a standard deviation of `$26,620`, this is a strategy that seems to straddle break even at this skill level.</p>
+
+<p style="font-size:17px;">The win bet strategy returned a `($25,644)` loss with a `$22,814` standard deviation.  Some other takeaways include:</p>
+
+<ul style="font-size:17px">
+<li>The WinDerEx8 strategy yielded significantly fewer bets compared to the win bet strategy: `2,231` vs `4,018`. This may be beneficial at the lower skill levels.</li>
+<li>The average win bet payoff was approximately 31% less than the average WinDerEx8 payoff.</li>
+<li>The five hedge strategies delivered the lowest bankroll standard deviations. 
+<li>The fixed hedging strategies seem to outperform the full hedging strategies.</li>
+</ul>
+
+</br>
+
+
+#### Figures 7. Full Simulation Results - 15% Skill Level
+
+
+```{r fig.width=10, fig.height=6, echo=FALSE, warning=FALSE, message=FALSE}
+
+
+format_table(sim2_tab15)
+
+```
+
+</br></br>
+
+#### 20% Skill Level
+<hr class="my-4">
+
+<p style="font-size:17px">Moving from a 15% to a 20% skill level, less than `$10,000` separates the top three performing strategies: WinDerEx8, WinDerEx and Win bet, respectively. Net bankrolls range from `$110,042` to `$100,552`.  For the win bet strategy, the 5% increase in skill level resulted in an increase in average winning wagers from 606 to 804, or 198 more wins. This increase drove a `$126,196` increase in the average net bankroll.</p>
+
+<p style="font-size:17px">Looking at the results of the remaining strategies, we see that the two Fixed Hedging strategies, WinH1F1 and WinH2F2, both returned positive net bankrolls, with WinF1H1 outperforming WinF2H2 by almost 2-times - `$76,764` vs. `$38,495`. We see a similar pattern between WinH1 and WinH28.  In this case, however, neither strategy managed to return positive returns. WinH2 was the poorest performing strategy - posting a `($37,227)` loss.</p>
+
+<p style="font-size:17px">Reviewing the results of the full hedging strategies at the 15% and 20% skill levels, one begins to question if the cost of hedging, reduced returns, outweigh the benefit - more wins and shorter losing streaks.  We see in Figure 8 that the WinH2 strategy recorded 206 more winning wagers compared to the win bet strategy. Yet, the win bet strategy outperformed WinH2 by more than `$137,000`.  Part of this discrepancy is explained by the average win payoff (AvgWin). While the WinH2 strategy had 1010 wins, its average winning amount was only `$154`.  This compares to `$524` for the win bet. The win bet strategy allocates 100% of the betting unit, `$100`, to the key horse. Conversely, the WinH2 strategy allocates its betting unit among three horses - in the best case, only one of these horse can win.  This means that both strategies have the same losing profile (loss of `$100`), but the winning profile are very different - the win bet strategy has a larger stake on the winning horse and therefore reaps greater rewards. At the 20% skill level these rewards more than offset losses from losing wagers. This is also illustrated in Figure 8a. Comparing the Win strategy to WinH2, the median net wager vale (represented by the black bar) is `-$100` at every skill level for the win strategy. The median level for WinH2 is higher than the win strategy across all skill levels. However, comparing the mean net wager value (represented by the black dots) of the win strategy to WinH2 reveals that the mean values for Win Strategy exceed those of WinH2 across all skill levels. This indicates that its not the number of wins that is important is the quality (amount) of the wins.</p> 
+
+
+</br>
+
+
+#### Figures 8. Full Simulation Results - 20% Skill Level
+
+```{r fig.width=10, fig.height=6, echo=FALSE}
+
+format_table(sim2_tab20)
+
+```
+
+</br></br>
+
+#### Figures 8a. Net Wager Value By Strategy and Skill 
+
+```{r fig.width=10, fig.height=6, echo=FALSE}
+
+c + scale_colour_brewer(palette = "Blues") 
+
+```
+
+</br></br>
+
+
+#### 25% Skill Level
+<hr class="my-4">
+
+<p style="font-size:17px;">Transitioning from a 20% skill level to a 25% skill level, several observations are worthy of discussion. First, the win bet strategy has emerged as the leading betting strategy with average bankroll of  `$223,765` versus approximately `$205,1002` and `$186,102` for the WinDerEx and WinDerEx8 strategies, respectively.  What's more, the, the win bet strategy, when compared to the hedge (non-derivative) strategies, has the highest bankroll standard deviation at `$25,905`. Second, the rank ordering of strategies by win and derivative wagers, followed by fixed hedged strategies followed full one and two horse hedge strategies has been solidified. horseplayers interested in maximizing their bankroll should clearly focus on win bet and exacta-based derivative strategies. Conversely, horseplayer interested in minimizing the standard deviation of returns would favor full hedge and fixed hedge strategies. Average bankroll standard deviation range from approximately `$26,000` for win and derivative strategies to `$8,000` for the WinH2 strategy.  Though it's important to note that even at the 25% skill level the WinH2 strategy fails to deliver a positive average bankroll.</p>
+
+<p style="font-size:17px;">A final observation that merits discussion is the decreasing average bankroll ranking of the WinDerEx8 strategy.  WinDerEx8 ranked number 1 at 15% and 20%, but has fallen to the 3-spot at the 25% level - What's driving this change.  We'll explore this topic in the next section - 30% skill level.</p>
+
+</br>
+
+#### Figures 9. Full Simulation Results - 25% Skill Level
+
+```{r fig.width=10, fig.height=6, echo=FALSE}
+
+
+format_table(sim2_tab25)
+
+```
+
+
+</br></br>
+
+#### 30% Skill Level
+<hr class="my-4">
+
+<p style="font-size:17px;">The transition from the 25% to 30% skill level may reflect a steady state for the strategy rankings - it's the first transition that the strategy rankings did not change. Returning to the WinDerEx8 strategy, what could be behind its decreased ranking.   At `$690`, this strategy enjoys the highest AvgWin value across all strategies. Referring again to Figure 8a and comparing the Win strategy to WinDerEx8 at the 30% skill level, the Win strategy has a higher mean net wager value (black dot) and a lower median net wager value (black line).  The high median value and lower mean value for WinDerEx8 reflect the number of races passed (no bet) because the field size did not meet the strategy minimum - 8 horses.  Passed wagers yield a zero net wager value and contribute to the strategy's relatively high (and near 0) median value and plateauing mean vale. This suggest that the fewer number of wagers that benefited this strategy at the 15% may well undermine the strategy at 30%. Conversely for the Win strategy, as the skill level increases there are more winning wagers to overcome the losers. </p>
+
+</br>
+
+#### Figures 10. Full Simulation Results - 30% Skill Level
+
+```{r fig.width=10, fig.height=6, echo=FALSE}
+
+format_table(sim2_tab30)
+
+```
+
+</br>
+
+### Conclusion
+<hr class="my-4">
+
+<p style="font-size:17px;"> To answer our first research question, __Is it possible to improve racetrack betting returns by employing hedging and/or derivative strategies.__, I reviewed results from the simulation analysis and concluded that it is in fact to possible to improve racetrack  betting returns by employing hedging and derivative strategies.   This analysis looked a small subset of potential strategies and found for low skill levels the WinDerEx and WinDerEX8 strategies outperformed the win bet strategy from  total return perspective.  Additionally, evidence was presented indicating that fixed Hedging strategies can be employed to earn lower, but competitive, with a lower standard deviation.  Potential areas for future research include employing other exotic wagers (trifectas, superfectas, daily doubles) as alternatives to the exacta in derivative strategies.  Moreover, the opportunity to further enhance derivative returns by including a subset of the remaining horses in the wager instead of all remaining horses is another area to explore.  For example, in an race with 10 horses, the horseplayer could employ a derivative exacta strategy by betting the key horse in the first slot and 5 additional horses in the second slot. By leaving out four horses the horseplayer has more funds to deploy of the other combinations.</p>
+
+<p style="font-size:17px;">The second question,  __What are the key factors that determine the success or failure of the hedging and derivative strategies__, has also been addressed by the simulation analysis. Variables with out-sized influence on hedging strategy outcomes include: horseplayer skill level, average payout of betting strategy, number of wagers the betting strategy produces and the percentage of the unit bet wagered on the winning horse/outcome.  It's also important to note that there are interactions between various drivers. For example, at low skill levels strategies benefited from a lower number of wagers, however, as skill level increased fewer wagers became a detriment to the betting strategy.</p> 
+
+<p style="font-size:17px">The final research question,  __Are hedging and derivative strategies ingredients to a successful machine learning wagering engine__, can only be tentatively answered in the affirmative,  owing to the fact that the strongest evidence in support of this occurred with low skill levels. Presumably someone pursuing a machine learning betting engine would at a minimum be aspiring to a high skill level.  However, there was also evidence to suggest and the prospect of additional research to support the notion that derivative strategies could in fact be deployed to enhance total returns independent of skill level.  The most compelling evidence is the strong performance of the two Exacta derivatives strategies, these strategies replicate a win bet by using the key horse in the first slot of an exacta and all other horses in the second slot.  An alternative strategy that used some fraction of remaining horses in the second slot could compete with the win bet strategy for top honor. Also using alternative exotic wagers such as trifecta, daily doubles and superfecta provide additional research opportunities</p>
+
+
+</br>
+
